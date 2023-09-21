@@ -47,18 +47,18 @@ class Metric:
         cls,
         y_true: t.Sequence[bool],
         y_pred: t.Union[
-            t.Sequence[bool],
-            t.Sequence[t.Sequence[bool]],
+            t.Sequence[float],
+            t.Sequence[t.Sequence[float]],
         ],
     ) -> "Metric":
         n = len(y_true)
         assert n > 0, "Input sequences cannot be empty"
-        y_pred = utils.seq(y_pred)
+        y_pred = [y_pred] if isinstance(y_pred[0], t.Sequence) else y_pred
         assert all(
             len(yp) == n for yp in y_pred
         ), "all y_pred must be of the same length"
         value = tuple(
-            cls.__metric(
+            cls._metric(
                 y_true=y_true,
                 y_pred=yp,
             )
@@ -67,7 +67,7 @@ class Metric:
         return cls._create_cls(value=value, y_true=y_true)
 
     @staticmethod
-    def __metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[float]) -> float:
         raise NotImplementedError
 
     @classmethod
@@ -84,7 +84,7 @@ class AccuracyBinary(Metric):
     min_dataset: float = 0
 
     @staticmethod
-    def __metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
         return accuracy_score(
             y_true=y_true,
             y_pred=y_pred,
@@ -105,7 +105,7 @@ class AUROCBinary(Metric):
     baseline: float = 0
 
     @staticmethod
-    def __metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
         return roc_auc_score(
             y_true=y_true,
             y_pred=y_pred,
@@ -124,7 +124,7 @@ class AveragePrecisionBinary(Metric):
     max_possible: float = 1
 
     @staticmethod
-    def __metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
         return average_precision_score(
             y_true=y_true,
             y_pred=y_pred,
