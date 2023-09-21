@@ -10,3 +10,4 @@ class TestUtils(unittest.TestCase):
         assert seq([1, 2]) == [1, 2]
         assert seq("xy") == ["xy"]
         assert seq(["x", "y"]) == ["x", "y"]
+        assert seq([]) == []

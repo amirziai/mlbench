@@ -53,7 +53,7 @@ class Metric:
     ) -> "Metric":
         n = len(y_true)
         assert n > 0, "Input sequences cannot be empty"
-        y_pred = [y_pred] if isinstance(y_pred[0], t.Sequence) else y_pred
+        y_pred = [y_pred] if not isinstance(y_pred[0], t.Sequence) else y_pred
         assert all(
             len(yp) == n for yp in y_pred
         ), "all y_pred must be of the same length"
@@ -108,7 +108,7 @@ class AUROCBinary(Metric):
     def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
         return roc_auc_score(
             y_true=y_true,
-            y_pred=y_pred,
+            y_score=y_pred,
         )
 
     @classmethod
@@ -127,15 +127,15 @@ class AveragePrecisionBinary(Metric):
     def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
         return average_precision_score(
             y_true=y_true,
-            y_pred=y_pred,
+            y_score=y_pred,
         )
 
     @classmethod
     def _create_cls(
         cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool]
     ) -> "Metric":
-        baseline = ...
-        min_dataset = ...
+        baseline = cls._get_baseline(y_true=y_true)
+        min_dataset = cls._get_min(y_true=y_true)
         return cls(value=value, baseline=baseline, min_dataset=min_dataset)
 
     @staticmethod
