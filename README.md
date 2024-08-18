@@ -1,5 +1,5 @@
 # mlbench
-ML benchmark
+ML metrics and benchmarking utils.
 
 ## install
 ```shell

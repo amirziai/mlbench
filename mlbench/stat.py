@@ -1,26 +1,36 @@
+import logging
 from dataclasses import dataclass
 import typing as t
 
 import numpy as np
 from scipy import stats
 
+from . import config
 from .utils import seq
 
 
-# TODO: implement
+_LOGGER = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True, eq=True)
 class Sig:
     value: t.Union[float, t.Tuple[float, ...]]
     baseline: float
-    _p: float = 0.05
+    p_sig: float = config.P_SIG
 
     @property
     def n(self) -> int:
         return len(self.values)
 
     def __post_init__(self):
+        if not (0 < self.p_sig < 1):
+            raise ValueError(
+                f"p-sig must be between 0 and 1. the provided value is {self.p_sig}"
+            )
         if self.n == 0:
             raise ValueError("Sig cannot take an empty sequence.")
+        if self.p_sig > config.P_SIG_WARNING:
+            _LOGGER.warning(f"p-sig is higher than {config.P_SIG_WARNING}")
 
     @property
     def values(self) -> t.List[float]:
@@ -35,7 +45,7 @@ class Sig:
         n = len(self.value)
         if n == 1:
             return False
-        return self.p < self._p
+        return self.p < self.p_sig
 
     @property
     def mean(self) -> float:

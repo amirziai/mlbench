@@ -1,20 +1,26 @@
-from dataclasses import dataclass
-from sklearn.metrics import accuracy_score, average_precision_score, roc_auc_score
+from dataclasses import dataclass, field
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    roc_auc_score,
+)
 import typing as t
 
 import numpy as np
 
-from . import utils, viz, ap
+from . import ap, config, utils, viz
 from .stat import Sig
 
 
 @dataclass(frozen=True, eq=True)
-class Metric:
+class _Metric:
     value: t.Union[float, t.Tuple[float, ...]]
     baseline: float
     min_dataset: float
     min_possible: float
     max_possible: float
+    p_sig: float = config.P_SIG
 
     def __post_init__(self):
         # TODO: support lower-is-better metrics
@@ -29,7 +35,11 @@ class Metric:
 
     @property
     def stat_sig(self) -> Sig:
-        return Sig(value=tuple(self.values), baseline=self.baseline)
+        return Sig(
+            value=tuple(self.values),
+            baseline=self.baseline,
+            p_sig=self.p_sig,
+        )
 
     @property
     def values(self) -> t.List[float]:
@@ -45,12 +55,13 @@ class Metric:
     @classmethod
     def from_dataset(
         cls,
-        y_true: t.Sequence[bool],
+        y_true: t.Sequence[float],
         y_pred: t.Union[
             t.Sequence[float],
             t.Sequence[t.Sequence[float]],
         ],
-    ) -> "Metric":
+        p_sig: config.P_SIG,
+    ) -> "_Metric":
         n = len(y_true)
         assert n > 0, "Input sequences cannot be empty"
         y_pred = [y_pred] if not isinstance(y_pred[0], t.Sequence) else y_pred
@@ -64,21 +75,21 @@ class Metric:
             )
             for yp in y_pred
         )
-        return cls._create_cls(value=value, y_true=y_true)
+        return cls._create_cls(value=value, y_true=y_true, p_sig=p_sig)
 
     @staticmethod
-    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[float]) -> float:
+    def _metric(y_true: t.Sequence[float], y_pred: t.Sequence[float]) -> float:
         raise NotImplementedError
 
     @classmethod
     def _create_cls(
-        cls, value: t.Sequence[float], y_true: t.Sequence[bool]
-    ) -> "Metric":
+        cls, value: t.Sequence[float], y_true: t.Sequence[float], p_sig: float
+    ) -> "_Metric":
         raise NotImplementedError
 
 
 @dataclass(frozen=True, eq=True)
-class AccuracyBinary(Metric):
+class AccuracyBinary(_Metric):
     min_possible: float = 0
     max_possible: float = 1
     min_dataset: float = 0
@@ -92,17 +103,41 @@ class AccuracyBinary(Metric):
 
     @classmethod
     def _create_cls(
-        cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool]
-    ) -> "Metric":
-        return cls(value=value, baseline=sum(y_true) / len(y_true))
+        cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool], p_sig: float
+    ) -> "_Metric":
+        return cls(value=value, baseline=sum(y_true) / len(y_true), p_sig=p_sig)
 
 
 @dataclass(frozen=True, eq=True)
-class AUROCBinary(Metric):
+class BalancedAccuracyBinary(AccuracyBinary):
     min_possible: float = 0
     max_possible: float = 1
     min_dataset: float = 0
-    baseline: float = 0
+    baseline: float = field(init=False, default=0.5)
+
+    @staticmethod
+    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+        return balanced_accuracy_score(
+            y_true=y_true,
+            y_pred=y_pred,
+        )
+
+    @classmethod
+    def _create_cls(
+        cls,
+        value: t.Tuple[float, ...],
+        y_true: t.Sequence[bool],
+        p_sig: float,
+    ) -> "BalancedAccuracyBinary":
+        return cls(value=value, p_sig=p_sig)
+
+
+@dataclass(frozen=True, eq=True)
+class AUROCBinary(_Metric):
+    min_possible: float = 0
+    max_possible: float = 1
+    min_dataset: float = 0
+    baseline: float = field(init=False, default=0.5)
 
     @staticmethod
     def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
@@ -113,13 +148,16 @@ class AUROCBinary(Metric):
 
     @classmethod
     def _create_cls(
-        cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool]
-    ) -> "Metric":
-        return cls(value=value)
+        cls,
+        value: t.Tuple[float, ...],
+        y_true: t.Sequence[bool],
+        p_sig: float,
+    ) -> "_Metric":
+        return cls(value=value, p_sig=p_sig)
 
 
 @dataclass(frozen=True, eq=True)
-class AveragePrecisionBinary(Metric):
+class AveragePrecisionBinary(_Metric):
     min_possible: float = 0
     max_possible: float = 1
 
@@ -132,11 +170,11 @@ class AveragePrecisionBinary(Metric):
 
     @classmethod
     def _create_cls(
-        cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool]
-    ) -> "Metric":
+        cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool], p_sig: float
+    ) -> "_Metric":
         baseline = cls._get_baseline(y_true=y_true)
         min_dataset = cls._get_min(y_true=y_true)
-        return cls(value=value, baseline=baseline, min_dataset=min_dataset)
+        return cls(value=value, baseline=baseline, min_dataset=min_dataset, p_sig=p_sig)
 
     @staticmethod
     def _get_baseline(y_true: t.Sequence[bool]) -> float:
