@@ -1,3 +1,4 @@
+import functools
 import logging
 from dataclasses import dataclass
 import typing as t
@@ -37,15 +38,21 @@ class Sig:
         return seq(self.value)
 
     @property
+    @functools.lru_cache()
     def p(self) -> float:
-        return stats.ttest_ind(self.values, [self.baseline] * self.n).pvalue
+        n = len(self.values)
+        if n == 1:
+            return np.nan
+        return stats.ttest_ind(
+            a=self.values,
+            b=[self.baseline] * self.n,
+            equal_var=False,
+            alternative="greater",
+        ).pvalue
 
     @property
     def is_stat_sig(self) -> bool:
-        n = len(self.value)
-        if n == 1:
-            return False
-        return self.p < self.p_sig
+        return False if np.isnan(self.p) else self.p < self.p_sig
 
     @property
     def mean(self) -> float:
