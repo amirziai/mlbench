@@ -16,8 +16,8 @@ def get_eval_binary_metrics() -> t.Set[str]:
 
 
 def eval_binary(
-    y_true: t.Sequence[bool],
-    y_pred: metrics.Y_PRED,
+    y_true: metrics.Y_BOOL,
+    y_pred: metrics.Y,
     metric: str = "balanced_accuracy",
     p_sig: float = config.P_SIG,
 ) -> metrics.Metric:

@@ -1,3 +1,9 @@
+"""
+Metrics.
+
+TODO: materializing y_true_concat redundantly. See if we can consolidate.
+"""
+
 import functools
 from dataclasses import dataclass, field
 
@@ -16,7 +22,8 @@ from . import ap, config, utils, viz
 from .stat import Sig
 
 
-Y_PRED = t.Union[t.Sequence[float], t.Sequence[t.Sequence[float]]]
+Y = t.Union[t.Sequence[float], t.Sequence[t.Sequence[float]]]
+Y_BOOL = t.Union[t.Sequence[bool], t.Sequence[t.Sequence[bool]]]
 
 
 @dataclass(frozen=True, eq=True)
@@ -138,32 +145,38 @@ class Metric:
     @classmethod
     def from_dataset(
         cls,
-        y_true: t.Sequence[float],
-        y_pred: Y_PRED,
+        y_true: Y,
+        y_pred: Y,
         p_sig: float = config.P_SIG,
     ) -> "Metric":
         value = cls._get_value(y_true=y_true, y_pred=y_pred)
         return cls._create_cls(value=value, y_true=y_true, p_sig=p_sig)
 
     @classmethod
-    def _get_value(
-        cls, y_true: t.Sequence[float], y_pred: Y_PRED
-    ) -> t.Tuple[float, ...]:
-        n = len(y_true)
-        if n == 0:
+    def _get_value(cls, y_true: Y, y_pred: Y) -> t.Tuple[float, ...]:
+        y_true_seq = utils.seq_of_seq(y_true)
+        if len(y_true_seq) == 0 or any(len(yt) == 0 for yt in y_true_seq):
             raise ValueError("Input sequences cannot be empty")
-        y_pred = (
-            [y_pred] if not isinstance(y_pred[0], (t.Sequence, np.ndarray)) else y_pred
-        )
+        y_pred_seq = utils.seq_of_seq(y_pred)
+        if len(y_true_seq) == 1:
+            n = len(y_true_seq[0])
+            if not all(n == len(yp) for yp in y_pred_seq):
+                raise ValueError("all y_pred must be of equal length to y_true")
+        else:
+            if len(y_pred_seq) != len(y_true_seq):
+                raise ValueError(
+                    f"y_true ({len(y_true_seq)}) and y_pred ({len(y_pred_seq)}) "
+                    f"must have the same number of experiments."
+                )
+            if not all(len(yt) == len(yp) for yt, yp in zip(y_true_seq, y_pred_seq)):
+                pass
 
-        if not all(len(yp) == n for yp in y_pred):
-            raise ValueError("all y_pred must be of equal length to y_true")
         return tuple(
             cls._metric(
-                y_true=y_true,
+                y_true=y_true_seq[0] if len(y_true_seq) == 1 else y_true_seq[idx],
                 y_pred=yp,
             )
-            for yp in y_pred
+            for idx, yp in enumerate(y_pred_seq)
         )
 
     @staticmethod
@@ -219,20 +232,28 @@ class Metric:
         details += f", {self.sample_cnt:,} data instances {thumb}"
         return f"{name}({details})"
 
+    @staticmethod
+    def _get_sample_cnt(y_true: Y) -> int:
+        return min(len(yt) for yt in utils.seq_of_seq(y_true))
+
+    @staticmethod
+    def _get_y_true_concat(y_true: Y) -> np.ndarray:
+        return np.concatenate(utils.seq_of_seq(y_true))
+
 
 @dataclass(frozen=True, eq=True, repr=False)
 class BinaryMetric(Metric):
     @classmethod
     def from_dataset(
         cls,
-        y_true: t.Sequence[bool],
-        y_pred: t.Union[
-            t.Sequence[float],
-            t.Sequence[t.Sequence[float]],
-        ],
+        y_true: Y_BOOL,
+        y_pred: Y,
         p_sig: float = config.P_SIG,
     ) -> "Metric":
-        if not np.all(np.isin(np.array(y_true), [0, 1, True, False])):
+        if not all(
+            np.all(np.isin(np.array(yt), [0, 1, True, False]))
+            for yt in utils.seq_of_seq(y_true)
+        ):
             raise ValueError("All target values passed for y_true must be binary.")
         return super().from_dataset(y_true=y_true, y_pred=y_pred, p_sig=p_sig)
 
@@ -244,7 +265,7 @@ class AccuracyBinary(BinaryMetric):
     min_dataset: float = 0
 
     @staticmethod
-    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: Y_BOOL, y_pred: Y) -> float:
         return accuracy_score(
             y_true=y_true,
             y_pred=y_pred,
@@ -254,11 +275,12 @@ class AccuracyBinary(BinaryMetric):
     def _create_cls(
         cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool], p_sig: float
     ) -> "Metric":
+        y_true_concat = cls._get_y_true_concat(y_true=y_true)
         return cls(
             value=value,
-            baseline=sum(y_true) / len(y_true),
+            baseline=sum(y_true_concat) / len(y_true_concat),
             p_sig=p_sig,
-            sample_cnt=len(y_true),
+            sample_cnt=cls._get_sample_cnt(y_true=y_true),
         )
 
 
@@ -270,7 +292,7 @@ class BalancedAccuracyBinary(AccuracyBinary):
     baseline: float = field(init=False, default=0.5)
 
     @staticmethod
-    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: Y_BOOL, y_pred: Y) -> float:
         return balanced_accuracy_score(
             y_true=y_true,
             y_pred=y_pred,
@@ -283,7 +305,9 @@ class BalancedAccuracyBinary(AccuracyBinary):
         y_true: t.Sequence[bool],
         p_sig: float,
     ) -> "BalancedAccuracyBinary":
-        return cls(value=value, p_sig=p_sig, sample_cnt=len(y_true))
+        return cls(
+            value=value, p_sig=p_sig, sample_cnt=cls._get_sample_cnt(y_true=y_true)
+        )
 
 
 @dataclass(frozen=True, eq=True, repr=False)
@@ -294,7 +318,7 @@ class AUROCBinary(BinaryMetric):
     baseline: float = field(init=False, default=0.5)
 
     @staticmethod
-    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: Y_BOOL, y_pred: Y) -> float:
         return roc_auc_score(
             y_true=y_true,
             y_score=y_pred,
@@ -307,7 +331,9 @@ class AUROCBinary(BinaryMetric):
         y_true: t.Sequence[bool],
         p_sig: float,
     ) -> "Metric":
-        return cls(value=value, p_sig=p_sig, sample_cnt=len(y_true))
+        return cls(
+            value=value, p_sig=p_sig, sample_cnt=cls._get_sample_cnt(y_true=y_true)
+        )
 
 
 @dataclass(frozen=True, eq=True, repr=False)
@@ -316,7 +342,7 @@ class AveragePrecisionBinary(BinaryMetric):
     max_possible: float = 1
 
     @staticmethod
-    def _metric(y_true: t.Sequence[bool], y_pred: t.Sequence[bool]) -> float:
+    def _metric(y_true: Y_BOOL, y_pred: Y) -> float:
         return average_precision_score(
             y_true=y_true,
             y_score=y_pred,
@@ -324,16 +350,24 @@ class AveragePrecisionBinary(BinaryMetric):
 
     @classmethod
     def _create_cls(
-        cls, value: t.Tuple[float, ...], y_true: t.Sequence[bool], p_sig: float
+        cls, value: t.Tuple[float, ...], y_true: Y_BOOL, p_sig: float
     ) -> "Metric":
-        baseline = cls._get_baseline(y_true=y_true)
-        min_dataset = cls._get_min(y_true=y_true)
+        # baseline and min values might be different for each data partition
+        # this is especially true for smaller datasets
+        # we're concatenating all partitions (if more than one) into a larger
+        # ground truth label pool to derive a better estimate
+        # TODO: the proper way to do this is to make Metric aware of each partition
+        # this is largely a problem for metrics such as AP and accuracy that don't have
+        # global baseline values
+        y_true_concat = cls._get_y_true_concat(y_true=y_true)
+        baseline = cls._get_baseline(y_true=y_true_concat)
+        min_dataset = cls._get_min(y_true=y_true_concat)
         return cls(
             value=value,
             baseline=baseline,
             min_dataset=min_dataset,
             p_sig=p_sig,
-            sample_cnt=len(y_true),
+            sample_cnt=cls._get_sample_cnt(y_true=y_true),
         )
 
     @staticmethod
